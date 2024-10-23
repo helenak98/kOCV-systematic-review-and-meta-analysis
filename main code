@@ -1,0 +1,410 @@
+################################################################################
+# Systematic Review of kOCV                                                           #
+#                                                                              #
+#         Created: February 20, 2023                                   #
+#         Last Updated: April 12, 2024                                                        #
+#         Coded by: Helena Kwon (hojeong.kwon@einsteinmed.edu)                         #
+################################################################################
+
+#------------------------------------------------------------------------------#
+# Set up
+#------------------------------------------------------------------------------#
+library("metafor")
+library("dplyr")
+library("tidyr")
+library("ggplot2")
+library("pwr")
+library("pROC")
+library("lme4")
+setwd('~/Documents/kOCV systematic review/data')
+data <- read.csv("extracted_data.csv")
+data_age <- read.csv("extracted_data_age.csv")
+data_sym <- read.csv("extracted_data_symptoms.csv")
+
+#------------------------------------------------------------------------------#
+# Define Functions
+#------------------------------------------------------------------------------#
+# Vaccine Efficacy
+data_RCT <- subset(data, RCT=="Yes")
+data_RCT_main <- subset(data, main=="Yes" & RCT=="Yes")
+VE_RCT <- escalc(measure="IRR", 
+                 x1i=cases_vax, x2i=cases_placebo, 
+                 t1i=fu_vax, t2i=fu_placebo, data=data_RCT_main,
+                 slab=paste(author, year, sep=", "))
+
+# Vaccine Effectiveness
+data_obs <- subset(data, RCT=="No")
+data_obs_main <- subset(data, main=="Yes" & RCT=="No")
+VE_obs <- escalc(measure="OR", 
+                 ai=cases_vax, bi=noncase_vax, 
+                 ci=cases_placebo, di=noncase_placebo, data=data_obs_main,
+                 slab=paste(author, year, sep=", "))
+
+#------------------------------------------------------------------------------#
+# Basic Characteristics
+#------------------------------------------------------------------------------#
+summary(data_RCT$follow_up)
+summary(data_obs$follow_up)
+
+sum(data_RCT_main$N_total) + sum(data_obs_main$N_total)
+sum(data_RCT_main$N_vax)
+sum(data_RCT_main$N_placebo)
+sum(data_obs_main$N_vax)
+sum(data_obs_main$N_placebo)
+
+mean(data_RCT_main$follow_up)
+mean(data_obs_main$follow_up)
+
+#------------------------------------------------------------------------------#
+# Publication bias Assessment for RCTs
+#------------------------------------------------------------------------------#
+pubbias_RCT <- rma(VE_RCT$yi, VE_RCT$vi, 
+                   data=data_RCT_main, 
+                   slab=paste(author, year, sep=", "))
+
+regtest(pubbias_RCT)
+
+funnel(pubbias_RCT, atransf=function(n){return(1-exp(n))}, 
+       xlab = "Vaccine Efficacy",
+       main= "Funnel plot for RCT",
+       label="out",
+       cex=0.5)
+
+#------------------------------------------------------------------------------#
+# Publication bias Assessment for Observational Studies
+#------------------------------------------------------------------------------#
+pubbias_obs <- rma(VE_obs$yi, VE_obs$vi, 
+                   data=data_obs_main, 
+                   slab=paste(author, year, sep=", "))
+
+regtest(pubbias_obs)
+
+funnel(pubbias_obs, atransf=function(n){return(1-exp(n))}, 
+       xlab = "Vaccine Effectiveness",
+       main= "Funnel plot for Observational Studies",
+       cex=0.5)
+
+#------------------------------------------------------------------------------#
+# Forest Plot of VE for RCTs
+#------------------------------------------------------------------------------#
+res_RCT <- rma(VE_RCT$yi, VE_RCT$vi, data=data_RCT_main)
+
+estimates <- function(text, res_RCT) {
+  list(bquote(paste(.(text),
+                    " (", I^2,
+                    .(metafor:::.pval(res_RCT$I2, digits=1, showeq=TRUE, sep=" ")),
+                    "%)")))}
+
+forest(res_RCT, transf=function(n){return(1-exp(n))},
+       mlab=estimates("Mean Efficacy", res_RCT),
+       psize=1, header="Author(s) and Year",
+       cex=0.68)
+
+#------------------------------------------------------------------------------#
+# Forest Plot of VE for Observational Studies
+#------------------------------------------------------------------------------#
+res_obs <- rma(VE_obs$yi, VE_obs$vi, data=data_obs_main)
+
+estimates <- function(text, res_obs) {
+  list(bquote(paste(.(text),
+                    " (", I^2,
+                    .(metafor:::.pval(res_obs$I2, digits=2, showeq=TRUE, sep=" ")),
+                    "%)")))}
+
+forest(res_obs, transf=function(n){return(1-exp(n))},
+       mlab=estimates("Mean Effectiveness", res_obs),
+       psize=1, header="Author(s) and Year",
+       cex=0.68)
+
+#------------------------------------------------------------------------------#
+# Sub-analysis of RCTs
+#------------------------------------------------------------------------------#
+# By vaccine type
+t.test((1-exp(yi)) ~ vaccine, data=VE_RCT)
+byvax <- escalc(measure="IRR", 
+                     x1i=cases_vax, x2i=cases_placebo, 
+                     t1i=fu_vax, t2i=fu_placebo, data=data_RCT)
+res_vaxtype <- rma(byvax$yi, byvax$vi, mods= ~follow_up, data=data_RCT)
+res_vaxtype
+
+regplot(res_vaxtype,
+        transf=function(n){return(1-exp(n))},
+        ylim=c(-0.5,1),
+        xlab="Follow-up (months)",
+        ylab="Vaccine efficacy",
+        main="Vaccine efficacy by vaccine types",
+        col=as.factor(data_RCT$vaccine),
+        pch=20)
+
+# By Age
+data_child <- subset(data_age, age=="children")
+data_adult <- subset(data_age, age=="adults")
+
+VE_age <- escalc(measure="IRR", 
+                 x1i=cases_vax, x2i=cases_placebo, 
+                 t1i=fu_vax, t2i=fu_placebo, data=data_age)
+t.test((1-exp(yi)) ~ age, data=VE_age)
+
+bychildren <- escalc(measure="IRR", 
+              x1i=cases_vax, x2i=cases_placebo, 
+              t1i=fu_vax, t2i=fu_placebo, data=data_child)
+
+res_child <- rma(bychildren$yi, bychildren$vi, mods= ~follow_up, data=data_child)
+res_child
+
+regplot(res_child,
+        transf=function(n){return(1-exp(n))},
+        ylim=c(-0.5,1),
+        xlab="Follow-up (months)",
+        ylab="Vaccine efficacy",
+        main="Vaccine efficacy in children",
+        shade="slategray1",
+        col="blue4",
+        pch=20)
+
+transformed_IRR_ch <- 1 - exp(bychildren$yi)
+t.test(transformed_IRR_ch, conf.level = 0.95)
+
+byadult <- escalc(measure="IRR", 
+                     x1i=cases_vax, x2i=cases_placebo, 
+                     t1i=fu_vax, t2i=fu_placebo, data=data_adult)
+
+res_adult <- rma(byadult$yi, byadult$vi, mods= ~follow_up, data=data_adult)
+res_adult
+
+regplot(res_adult,
+        transf=function(n){return(1-exp(n))},
+        ylim=c(-0.5,1),
+        xlab="Follow-up (months)",
+        ylab="Vaccine efficacy",
+        main="Vaccine efficacy in adults",
+        shade="darkseagreen",
+        col="darkgreen",
+        pch=20)
+
+transformed_IRR_ad <- 1 - exp(byadult$yi)
+t.test(transformed_IRR_ad, conf.level = 0.95)
+
+# By Symptoms
+data_severe <- subset(data_sym, symptoms=="severe")
+data_mild <- subset(data_sym, symptoms=="mild")
+
+VE_sym <- escalc(measure="IRR", 
+                 x1i=cases_vax, x2i=cases_placebo, 
+                 t1i=fu_vax, t2i=fu_placebo, data=data_sym)
+t.test((1-exp(yi)) ~ symptoms, data=VE_sym)
+
+bysev <- escalc(measure="IRR", 
+                     x1i=cases_vax, x2i=cases_placebo, 
+                     t1i=fu_vax, t2i=fu_placebo, data=data_severe)
+
+res_sev <- rma(bysev$yi, bysev$vi, mods= ~follow_up, data=data_severe)
+res_sev
+
+regplot(res_sev,
+        transf=function(n){return(1-exp(n))},
+        ylim=c(0,1),
+        xlab="Follow-up (months)",
+        ylab="Vaccine efficacy",
+        main="Vaccine efficacy against severe dehydration",
+        shade="mediumpurple",
+        col="darkslateblue",
+        pch=20)
+
+transformed_IRR_sev <- 1 - exp(bysev$yi)
+t.test(transformed_IRR_sev, conf.level = 0.95)
+
+bymild <- escalc(measure="IRR", 
+                x1i=cases_vax, x2i=cases_placebo, 
+                t1i=fu_vax, t2i=fu_placebo, data=data_mild)
+
+res_mild <- rma(bymild$yi, bymild$vi, mods= ~follow_up, data=data_mild)
+res_mild
+
+regplot(res_mild,
+        transf=function(n){return(1-exp(n))},
+        ylim=c(-1,1),
+        xlab="Follow-up (months)",
+        ylab="Vaccine efficacy",
+        main="Vaccine efficacy against mild to no dehydration",
+        shade="darkseagreen",
+        col="darkgreen",
+        pch=20)
+
+transformed_IRR_mild <- 1 - exp(bymild$yi)
+t.test(transformed_IRR_mild, conf.level = 0.95)
+
+# By dose
+data_RCT_1 <- subset(data, RCT=="Yes" & doses=="1")
+data_RCT_2 <- subset(data, RCT=="Yes" & doses=="2")
+data_RCT_3 <- subset(data, RCT=="Yes" & doses=="3")
+
+transformed_IRR_RCT <- 1 - exp(VE_RCT$yi)
+res_dose <- aov(transformed_IRR_RCT~ doses,
+               data = VE_RCT)
+summary(res_dose)
+
+by1dose <- escalc(measure="IRR", 
+                  x1i=cases_vax, x2i=cases_placebo, 
+                  t1i=fu_vax, t2i=fu_placebo, data=data_RCT_1)
+
+
+transformed_1dose <- 1 - exp(by1dose$yi)
+t.test(transformed_1dose, conf.level = 0.95)
+
+by2dose <- escalc(measure="IRR", 
+                x1i=cases_vax, x2i=cases_placebo, 
+                t1i=fu_vax, t2i=fu_placebo, data=data_RCT_2)
+
+transformed_2dose <- 1 - exp(by2dose$yi)
+t.test(transformed_2dose, conf.level = 0.95)
+
+res_2 <- rma(by2dose$yi, by2dose$vi, mods= ~follow_up, data=data_RCT_2)
+res_2
+
+regplot(res_2,
+        transf=function(n){return(1-exp(n))},
+        ylim=c(-0.5,1),
+        xlab="Follow-up (months)",
+        ylab="Vaccine efficacy",
+        main="Vaccine efficacy of 2 dose schedule",
+        shade="mediumpurple",
+        col="darkslateblue",
+        pch=20)
+
+by3dose <- escalc(measure="IRR", 
+                  x1i=cases_vax, x2i=cases_placebo, 
+                  t1i=fu_vax, t2i=fu_placebo, data=data_RCT_3)
+
+transformed_3dose <- 1 - exp(by3dose$yi)
+t.test(transformed_3dose, conf.level = 0.95)
+
+res_3 <- rma(by3dose$yi, by3dose$vi, mods= ~follow_up, data=data_RCT_3)
+res_3
+
+regplot(res_3,
+        transf=function(n){return(1-exp(n))},
+        ylim=c(0,1),
+        xlab="Follow-up (months)",
+        ylab="Vaccine efficacy",
+        main="Vaccine efficacy of 3 dose schedule",
+        shade="mediumpurple",
+        col="darkslateblue",
+        pch=20)
+
+#------------------------------------------------------------------------------#
+# Sub-analysis of Observational Studies
+#------------------------------------------------------------------------------#
+# By vaccine type
+t.test((1-exp(yi)) ~ vaccine, data=VE_obs)
+
+# By dose
+data_obs_1 <- subset(data_obs, RCT=="No" & doses=="1")
+data_obs_2 <- subset(data_obs, RCT=="No" & doses=="2")
+
+summary(data_obs_1$follow_up)
+summary(data_obs_2$follow_up)
+
+t.test((1-exp(yi)) ~ doses, data=VE_obs)
+
+by1dose_obs <- escalc(measure="OR", 
+                      ai=cases_vax, bi=noncase_vax, 
+                      ci=cases_placebo, di=noncase_placebo, data=data_obs_1)
+
+transformed_1dose_obs <- 1 - exp(by1dose_obs$yi)
+t.test(transformed_1dose_obs, conf.level = 0.95)
+
+by2dose_obs <- escalc(measure="OR", 
+                      ai=cases_vax, bi=noncase_vax, 
+                      ci=cases_placebo, di=noncase_placebo, data=data_obs_2)
+
+transformed_2dose_obs <- 1 - exp(by2dose_obs$yi)
+t.test(transformed_2dose_obs, conf.level = 0.95)
+
+#------------------------------------------------------------------------------#
+# Waning dynamics of vaccine protection
+#------------------------------------------------------------------------------#
+bytime <- escalc(measure="IRR", 
+                x1i=cases_vax, x2i=cases_placebo, 
+                t1i=fu_vax, t2i=fu_placebo, data=data_RCT)
+res_time <- rma(bytime$yi, bytime$vi, mods= ~follow_up, data=data_RCT)
+res_time
+
+regplot(res_time,
+        transf=function(n){return(1-exp(n))},
+        xlab="Follow-up (months)",
+        ylab="Vaccine efficacy",
+        main="Vaccine efficacy by duration of follow-up",
+        shade="darksalmon",
+        col="brown",
+        pch=20)
+
+new_follow_up <- c(12, 24, 36, 48, 60) 
+new_data <- data.frame(follow_up = new_follow_up)
+new_data_mat <- as.matrix(new_data)
+pred <- predict(res_time, transf = function(n){return(1-exp(n))}, newmods = new_data_mat)
+
+vaccine_efficacy <- 1 - exp(-pred$pred)
+lower_bound <- 1 - exp(-pred$ci.lb)
+upper_bound <- 1 - exp(-pred$ci.ub)
+
+cat("At", new_follow_up, "months, the estimated vaccine efficacy is", 
+    vaccine_efficacy, "with 95% confidence intervals of", lower_bound, "to", 
+    upper_bound)
+
+bytime_obs <- escalc(measure="OR", 
+                     ai=cases_vax, bi=noncase_vax, 
+                     ci=cases_placebo, di=noncase_placebo, data=data_obs)
+
+res_time_obs <- rma(bytime_obs$yi, bytime_obs$vi, mods= ~follow_up, data=data_obs)
+res_time_obs
+
+regplot(res_time_obs,
+        transf=function(n){return(1-exp(n))},
+        ylim=c(-2,1),
+        xlab="Follow-up (months)",
+        ylab="Vaccine effectiveness",
+        main="Vaccine effectiveness by duration of follow-up",
+        shade="mistyrose2",
+        col="lightpink3",
+        pch=20)
+
+new_follow_up_obs <- c(12, 24, 36, 48) 
+new_data_obs <- data.frame(follow_up_obs = new_follow_up_obs)
+new_data_mat_obs <- as.matrix(new_data_obs)
+pred_obs <- predict(res_time_obs, transf = function(n){return(1-exp(n))}, newmods = new_data_mat_obs)
+
+vaccine_eff_obs <- 1 - exp(-pred_obs$pred)
+lower_bound_obs <- 1 - exp(-pred_obs$ci.lb)
+upper_bound_obs <- 1 - exp(-pred_obs$ci.ub)
+
+cat("At", new_follow_up_obs, "months, the estimated vaccine efficacy is", 
+    vaccine_eff_obs, "with 95% confidence intervals of", lower_bound_obs, "to", 
+    upper_bound_obs)
+
+#------------------------------------------------------------------------------#
+# Power Analysis
+#------------------------------------------------------------------------------#
+#RCT
+effect_size_RCT <-0.55
+theta <- 0.2
+K_RCT <- 18
+n1_RCT <- (sum(data_RCT_main$N_vax))/18
+n2_RCT <- (sum(data_RCT_main$N_placebo))/18
+
+sigma_RCT <- sqrt(((n1_RCT+n2_RCT)/(n1_RCT*n2_RCT)+(theta^2/(2*n1_RCT+n2_RCT)))/K_RCT)
+z_RCT = theta/sigma_RCT
+
+1 - pnorm(1.96-z_RCT) + pnorm(-1.96-z_RCT)
+
+#Observational Studies
+effect_size_obs <-0.73
+theta <- 0.2
+K_obs <- 10
+n1_obs <- (sum(data_obs_main$N_vax))/10
+n2_obs <- (sum(data_obs_main$N_placebo))/10
+
+sigma_obs <- sqrt(((n1_obs+n2_obs)/(n1_obs*n2_obs)+(theta^2/(2*n1_obs+n2_obs)))/K_obs)
+z_obs = theta/sigma_obs
+
+1 - pnorm(1.96-z_obs) + pnorm(-1.96-z_obs)
