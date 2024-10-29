@@ -1,9 +1,9 @@
 ################################################################################
-# Systematic Review of kOCV                                                    #
+# Systematic Review of kOCV                                                           #
 #                                                                              #
-#         Created: February 20, 2023                                           #
-#         Last Updated: April 12, 2024                                         #
-#         Coded by: Helena Kwon (hojeong.kwon@einsteinmed.edu)                 #
+#         Created: February 20, 2023                                   #
+#         Last Updated: October 28, 2024                                                        #
+#         Coded by: Helena Kwon (hojeong.kwon@einsteinmed.edu)                         #
 ################################################################################
 
 #------------------------------------------------------------------------------#
@@ -16,6 +16,7 @@ library("ggplot2")
 library("pwr")
 library("pROC")
 library("lme4")
+library("minpack.lm")
 setwd('~/Documents/kOCV systematic review/data')
 data <- read.csv("extracted_data.csv")
 data_age <- read.csv("extracted_data_age.csv")
@@ -27,19 +28,58 @@ data_sym <- read.csv("extracted_data_symptoms.csv")
 # Vaccine Efficacy
 data_RCT <- subset(data, RCT=="Yes")
 data_RCT_main <- subset(data, main=="Yes" & RCT=="Yes")
-VE_RCT <- escalc(measure="IRR", 
-                 x1i=cases_vax, x2i=cases_placebo, 
-                 t1i=fu_vax, t2i=fu_placebo, data=data_RCT_main,
-                 slab=paste(author, year, sep=", "))
+VE_RCT_main <- escalc(measure="IRR", 
+                      x1i = data_RCT_main$cases_vax, 
+                      x2i = data_RCT_main$cases_placebo, 
+                      t1i = data_RCT_main$fu_vax, 
+                      t2i = data_RCT_main$fu_placebo, 
+                      data = data_RCT_main)
+irr_values_main <- exp(VE_RCT_main$yi)
+print(irr_values_main)
+VE_RCT_main$VE <- 1 - irr_values_main
 
+VE_RCT <- escalc(measure="IRR", 
+                 x1i = data_RCT$cases_vax, 
+                 x2i = data_RCT$cases_placebo, 
+                 t1i = data_RCT$fu_vax, 
+                 t2i = data_RCT$fu_placebo,
+                 data = data_RCT)
+irr_values <- exp(VE_RCT$yi)
+print(irr_values)
+VE_RCT$VE <- 1 - irr_values
+  
 # Vaccine Effectiveness
 data_obs <- subset(data, RCT=="No")
 data_obs_main <- subset(data, main=="Yes" & RCT=="No")
-VE_obs <- escalc(measure="OR", 
+VE_obs_main <- escalc(measure="OR", 
                  ai=cases_vax, bi=noncase_vax, 
                  ci=cases_placebo, di=noncase_placebo, data=data_obs_main,
                  slab=paste(author, year, sep=", "))
+VE_obs <- escalc(measure="OR", 
+                      ai=cases_vax, bi=noncase_vax, 
+                      ci=cases_placebo, di=noncase_placebo, data=data_obs,
+                      slab=paste(author, year, sep=", "))
+orr_values <- exp(VE_obs$yi)
+print(orr_values)
+VE_obs$VE <- 1 - orr_values
 
+# Vaccine Efficacy in Children
+data_child <- subset(data_age, age=="children")
+data_adult <- subset(data_age, age=="adults")
+VE_child <- escalc(measure="IRR", 
+                   x1i=cases_vax, x2i=cases_placebo, 
+                   t1i=fu_vax, t2i=fu_placebo, data=data_child)
+orr_values_child <- exp(VE_child$yi)
+print(orr_values_child)
+VE_child$VE <- 1 - orr_values_child
+
+# Vaccine Efficacy in Adults
+VE_adult <- escalc(measure="IRR", 
+                   x1i=cases_vax, x2i=cases_placebo, 
+                   t1i=fu_vax, t2i=fu_placebo, data=data_adult)
+orr_values_adult <- exp(VE_adult$yi)
+print(orr_values_adult)
+VE_adult$VE <- 1 - orr_values_adult
 #------------------------------------------------------------------------------#
 # Basic Characteristics
 #------------------------------------------------------------------------------#
@@ -54,11 +94,10 @@ sum(data_obs_main$N_placebo)
 
 mean(data_RCT_main$follow_up)
 mean(data_obs_main$follow_up)
-
 #------------------------------------------------------------------------------#
 # Publication bias Assessment for RCTs
 #------------------------------------------------------------------------------#
-pubbias_RCT <- rma(VE_RCT$yi, VE_RCT$vi, 
+pubbias_RCT <- rma(VE_RCT_main$yi, VE_RCT_main$vi, 
                    data=data_RCT_main, 
                    slab=paste(author, year, sep=", "))
 
@@ -69,11 +108,10 @@ funnel(pubbias_RCT, atransf=function(n){return(1-exp(n))},
        main= "Funnel plot for RCT",
        label="out",
        cex=0.5)
-
 #------------------------------------------------------------------------------#
 # Publication bias Assessment for Observational Studies
 #------------------------------------------------------------------------------#
-pubbias_obs <- rma(VE_obs$yi, VE_obs$vi, 
+pubbias_obs <- rma(VE_obs_main$yi, VE_obs_main$vi, 
                    data=data_obs_main, 
                    slab=paste(author, year, sep=", "))
 
@@ -83,27 +121,41 @@ funnel(pubbias_obs, atransf=function(n){return(1-exp(n))},
        xlab = "Vaccine Effectiveness",
        main= "Funnel plot for Observational Studies",
        cex=0.5)
-
 #------------------------------------------------------------------------------#
 # Forest Plot of VE for RCTs
 #------------------------------------------------------------------------------#
-res_RCT <- rma(VE_RCT$yi, VE_RCT$vi, data=data_RCT_main)
+res_RCT <- rma(VE_RCT_main$yi, VE_RCT_main$vi, data=data_RCT_main)
 
 estimates <- function(text, res_RCT) {
   list(bquote(paste(.(text),
                     " (", I^2,
-                    .(metafor:::.pval(res_RCT$I2, digits=1, showeq=TRUE, sep=" ")),
+                    .(metafor:::.pval(res_RCT$I2, digits=1, showeq=TRUE, sep=", ")),
                     "%)")))}
 
+data_RCT_main$study_label <- ifelse(
+    data_RCT_main$author == "Clemens et al" & 
+    data_RCT_main$vaccine == "WC/rBS",
+  paste(data_RCT_main$author, ", ", data_RCT_main$year, ".2", sep = ""),  
+  ifelse(
+      data_RCT_main$author == "Clemens et al" & 
+      data_RCT_main$vaccine == "WC",
+    paste(data_RCT_main$author, ", ", data_RCT_main$year, ".1", sep = ""),  
+    ifelse(
+      data_RCT_main$follow_up != 12,
+      paste(data_RCT_main$author, ", ", data_RCT_main$year, "*", sep = ""),  
+      paste(data_RCT_main$author, ", ", data_RCT_main$year, sep = "")        
+    )
+  )
+)
 forest(res_RCT, transf=function(n){return(1-exp(n))},
        mlab=estimates("Mean Efficacy", res_RCT),
        psize=1, header="Author(s) and Year",
+       slab = data_RCT_main$study_label,
        cex=0.68)
-
 #------------------------------------------------------------------------------#
 # Forest Plot of VE for Observational Studies
 #------------------------------------------------------------------------------#
-res_obs <- rma(VE_obs$yi, VE_obs$vi, data=data_obs_main)
+res_obs <- rma(VE_obs_main$yi, VE_obs_main$vi, data=data_obs_main)
 
 estimates <- function(text, res_obs) {
   list(bquote(paste(.(text),
@@ -111,11 +163,15 @@ estimates <- function(text, res_obs) {
                     .(metafor:::.pval(res_obs$I2, digits=2, showeq=TRUE, sep=" ")),
                     "%)")))}
 
+data_obs_main$study_label <- ifelse(data_obs_main$follow_up != 12, 
+                                    paste(data_obs_main$author, data_obs_main$year, "*", sep = ", "), 
+                                    paste(data_obs_main$author, data_obs_main$year, sep = ", "))
+
 forest(res_obs, transf=function(n){return(1-exp(n))},
        mlab=estimates("Mean Effectiveness", res_obs),
        psize=1, header="Author(s) and Year",
+       slab = data_obs_main$study_label,
        cex=0.68)
-
 #------------------------------------------------------------------------------#
 # Sub-analysis of RCTs
 #------------------------------------------------------------------------------#
@@ -127,63 +183,187 @@ byvax <- escalc(measure="IRR",
 res_vaxtype <- rma(byvax$yi, byvax$vi, mods= ~follow_up, data=data_RCT)
 res_vaxtype
 
-regplot(res_vaxtype,
-        transf=function(n){return(1-exp(n))},
-        ylim=c(-0.5,1),
-        xlab="Follow-up (months)",
-        ylab="Vaccine efficacy",
-        main="Vaccine efficacy by vaccine types",
-        col=as.factor(data_RCT$vaccine),
-        pch=20)
-
 # By Age
-data_child <- subset(data_age, age=="children")
-data_adult <- subset(data_age, age=="adults")
-
 VE_age <- escalc(measure="IRR", 
                  x1i=cases_vax, x2i=cases_placebo, 
                  t1i=fu_vax, t2i=fu_placebo, data=data_age)
 t.test((1-exp(yi)) ~ age, data=VE_age)
 
+# Children
+# Linear Model
 bychildren <- escalc(measure="IRR", 
-              x1i=cases_vax, x2i=cases_placebo, 
-              t1i=fu_vax, t2i=fu_placebo, data=data_child)
+                 x1i=cases_vax, x2i=cases_placebo, 
+                 t1i=fu_vax, t2i=fu_placebo, data=data_child)
+linear_model_child <- rma(bychildren$yi, bychildren$vi, mods= ~follow_up, data=data_child)
+linear_model_child
 
-res_child <- rma(bychildren$yi, bychildren$vi, mods= ~follow_up, data=data_child)
-res_child
+coef_estimates_child <- linear_model_child$b
+se_estimates_child <- linear_model_child$se
+cat("Estimated Parameters of the Linear Model:\n")
+cat("Intercept:", round(coef_estimates_child[1], 4), "±", round(se_estimates_child[1], 4), "\n")
+cat("Slope (Follow-up Effect):", round(coef_estimates_child[2], 4), "±", round(se_estimates_child[2], 4), "\n")
 
-regplot(res_child,
-        transf=function(n){return(1-exp(n))},
-        ylim=c(-0.5,1),
-        xlab="Follow-up (months)",
-        ylab="Vaccine efficacy",
-        main="Vaccine efficacy in children",
-        shade="slategray1",
-        col="blue4",
-        pch=20)
+# Power Law Model 
+VE_child$log_VE <- log(VE_child$VE)
+VE_child$log_follow_up <- log(VE_child$follow_up)
+power_law_model_child <- lm(log_VE ~ log_follow_up, data = VE_child)
+model_summary_child <- summary(power_law_model_child)
+log_a_child <- coef(power_law_model_child)[1]
+b_child <- coef(power_law_model_child)[2]
+a_child <- exp(log_a_child)
 
-transformed_IRR_ch <- 1 - exp(bychildren$yi)
-t.test(transformed_IRR_ch, conf.level = 0.95)
+SE_log_a_child <- model_summary_child$coefficients[1, 2]  
+SE_b_child <- model_summary_child$coefficients[2, 2]
+SE_a_child <- SE_log_a_child * a_child
+cat("Estimated Parameters:\n")
+cat("a =", a_child, "with SE =", SE_a_child, "\n")
+cat("b =", b_child, "with SE =", SE_b_child, "\n")
 
+# Gamma Model
+VE_child <- VE_child[VE_child$VE > 0, ]
+gamma_model_child <- glm(VE ~ follow_up, 
+                   family = Gamma(link = "log"), 
+                   data = VE_child)
+summary(gamma_model_child)
+
+params_child <- coef(gamma_model_child)
+se_params_child <- summary(gamma_model_child)$coefficients[, "Std. Error"]
+cat("Estimated Parameters of the Gamma Model:\n")
+cat("a (Initial Efficacy):", round(exp(params_child[1]), 4), "±", round(se_params_child[1], 4), "\n")
+cat("b (Rate of Decline):", round(params_child[2], 4), "±", round(se_params_child[2], 4), "\n")
+
+# Best Fit
+aic_linear_child <- AIC(linear_model_child)
+print(aic_linear_child)
+
+aic_powerlaw_child <- AIC(power_law_model_child)
+print(aic_powerlaw_child)
+
+aic_gamma_child <- AIC(gamma_model_child)
+print(aic_gamma_child)
+
+# Plot the best fit graph for vaccine efficacy
+new_follow_up_child <- seq(min(VE_child$follow_up), max(VE_child$follow_up), length.out = 100)
+new_data_child <- data.frame(follow_up = new_follow_up_child)
+
+predictions_child <- predict(gamma_model_child, newdata = new_data_child, type = "link", se.fit = TRUE)
+fit_child <- exp(predictions_child$fit)  
+lwr_child <- exp(predictions_child$fit - 1.96 * predictions_child$se.fit)  
+upr_child <- exp(predictions_child$fit + 1.96 * predictions_child$se.fit)
+
+plot(VE_child$follow_up, VE_child$VE, 
+     xlab = "Follow-up (months)", 
+     ylab = "Vaccine Efficacy", 
+     main = "Vaccine Efficacy in Children",
+     pch = 20, col = "blue4")
+lines(new_follow_up_child, fit_child, col = "red", lwd = 2)
+lines(new_follow_up_child, lwr_child, col = "darkgray", lty = 2)  
+lines(new_follow_up_child, upr_child, col = "darkgray", lty = 2)
+polygon(c(new_follow_up_child, rev(new_follow_up_child)), 
+        c(upr_child, rev(lwr_child)), 
+        col = adjustcolor("slategray1", alpha.f = 0.2), border = NA)
+
+specified_times_child <- data.frame(follow_up = c(12, 24, 36, 48))
+predicted_values_specified_child <- predict(gamma_model_child, newdata = specified_times_child, type = "response", se.fit = TRUE)
+VE_specified_child <- predicted_values_specified_child$fit
+se_fit_child <- predicted_values_specified_child$se.fit
+lwr_specified_child <- VE_specified_child - 1.96 * se_fit_child  
+upr_specified_child <- VE_specified_child + 1.96 * se_fit_child
+results_child <- data.frame(
+  Follow_Up = specified_times_child$follow_up,  
+  Predicted_VE = VE_specified_child,
+  Lower_CI = lwr_specified_child,
+  Upper_CI = upr_specified_child  
+)
+print(results_child)
+
+# Adults
+# Linear Model
 byadult <- escalc(measure="IRR", 
-                     x1i=cases_vax, x2i=cases_placebo, 
-                     t1i=fu_vax, t2i=fu_placebo, data=data_adult)
+                  x1i=cases_vax, x2i=cases_placebo, 
+                  t1i=fu_vax, t2i=fu_placebo, data=data_adult)
+linear_model_adult <- rma(byadult$yi, byadult$vi, mods= ~follow_up, data=data_adult)
+linear_model_adult
 
-res_adult <- rma(byadult$yi, byadult$vi, mods= ~follow_up, data=data_adult)
-res_adult
+coef_estimates_adult <- linear_model_adult$b
+se_estimates_adult <- linear_model_adult$se
+cat("Estimated Parameters of the Linear Model:\n")
+cat("Intercept:", round(coef_estimates_adult[1], 4), "±", round(se_estimates_adult[1], 4), "\n")
+cat("Slope (Follow-up Effect):", round(coef_estimates_adult[2], 4), "±", round(se_estimates_adult[2], 4), "\n")
 
-regplot(res_adult,
-        transf=function(n){return(1-exp(n))},
-        ylim=c(-0.5,1),
-        xlab="Follow-up (months)",
-        ylab="Vaccine efficacy",
-        main="Vaccine efficacy in adults",
-        shade="darkseagreen",
-        col="darkgreen",
-        pch=20)
+# Power Law Model 
+VE_adult$log_VE <- log(VE_adult$VE)
+VE_adult$log_follow_up <- log(VE_adult$follow_up)
+power_law_model_adult <- lm(log_VE ~ log_follow_up, data = VE_adult)
+model_summary_adult <- summary(power_law_model_adult)
+log_a_adult <- coef(power_law_model_adult)[1]
+b_adult <- coef(power_law_model_adult)[2]
+a_adult <- exp(log_a_adult)
 
-transformed_IRR_ad <- 1 - exp(byadult$yi)
-t.test(transformed_IRR_ad, conf.level = 0.95)
+SE_log_a_adult <- model_summary_adult$coefficients[1, 2]  
+SE_b_adult <- model_summary_adult$coefficients[2, 2]
+SE_a_adult <- SE_log_a_adult * a_adult
+cat("Estimated Parameters:\n")
+cat("a =", a_adult, "with SE =", SE_a_adult, "\n")
+cat("b =", b_adult, "with SE =", SE_b_adult, "\n")
+
+# Gamma Model
+VE_adult <- VE_adult[VE_adult$VE > 0, ]
+gamma_model_adult <- glm(VE ~ follow_up, 
+                         family = Gamma(link = "log"), 
+                         data = VE_adult)
+summary(gamma_model_adult)
+
+params_adult <- coef(gamma_model_adult)
+se_params_adult <- summary(gamma_model_adult)$coefficients[, "Std. Error"]
+cat("Estimated Parameters of the Gamma Model:\n")
+cat("a (Initial Efficacy):", round(exp(params_adult[1]), 4), "±", round(se_params_adult[1], 4), "\n")
+cat("b (Rate of Decline):", round(params_adult[2], 4), "±", round(se_params_adult[2], 4), "\n")
+
+# Best Fit
+aic_linear_adult <- AIC(linear_model_adult)
+print(aic_linear_adult)
+
+aic_powerlaw_adult <- AIC(power_law_model_adult)
+print(aic_powerlaw_adult)
+
+aic_gamma_adult <- AIC(gamma_model_adult)
+print(aic_gamma_adult)
+
+# Plot the best fit graph for vaccine efficacy
+new_follow_up_adult <- seq(min(VE_adult$follow_up), max(VE_adult$follow_up), length.out = 100)
+new_data_adult <- data.frame(follow_up = new_follow_up_adult)
+
+predictions_adult <- predict(gamma_model_adult, newdata = new_data_adult, type = "link", se.fit = TRUE)
+fit_adult <- exp(predictions_adult$fit)  
+lwr_adult <- exp(predictions_adult$fit - 1.96 * predictions_adult$se.fit)  
+upr_adult <- exp(predictions_adult$fit + 1.96 * predictions_adult$se.fit)
+
+plot(VE_adult$follow_up, VE_adult$VE, 
+     xlab = "Follow-up (months)", 
+     ylab = "Vaccine Efficacy", 
+     main = "Vaccine Efficacy in Adults",
+     pch = 20, col = "darkgreen")
+lines(new_follow_up_adult, fit_adult, col = "red", lwd = 2)
+lines(new_follow_up_adult, lwr_adult, col = "darkgray", lty = 2)  
+lines(new_follow_up_adult, upr_adult, col = "darkgray", lty = 2)
+polygon(c(new_follow_up_adult, rev(new_follow_up_adult)), 
+        c(upr_adult, rev(lwr_adult)), 
+        col = adjustcolor("darkseagreen", alpha.f = 0.2), border = NA)
+
+specified_times_adult <- data.frame(follow_up = c(12, 24, 36, 48))
+predicted_values_specified_adult <- predict(gamma_model_adult, newdata = specified_times_adult, type = "response", se.fit = TRUE)
+VE_specified_adult <- predicted_values_specified_adult$fit
+se_fit_adult <- predicted_values_specified_adult$se.fit
+lwr_specified_adult <- VE_specified_adult - 1.96 * se_fit_adult  
+upr_specified_adult <- VE_specified_adult + 1.96 * se_fit_adult
+results_adult <- data.frame(
+  Follow_Up = specified_times_adult$follow_up,  
+  Predicted_VE = VE_specified_adult,
+  Lower_CI = lwr_specified_adult,
+  Upper_CI = upr_specified_adult  
+)
+print(results_adult)
 
 # By Symptoms
 data_severe <- subset(data_sym, symptoms=="severe")
@@ -195,42 +375,13 @@ VE_sym <- escalc(measure="IRR",
 t.test((1-exp(yi)) ~ symptoms, data=VE_sym)
 
 bysev <- escalc(measure="IRR", 
-                     x1i=cases_vax, x2i=cases_placebo, 
-                     t1i=fu_vax, t2i=fu_placebo, data=data_severe)
-
-res_sev <- rma(bysev$yi, bysev$vi, mods= ~follow_up, data=data_severe)
-res_sev
-
-regplot(res_sev,
-        transf=function(n){return(1-exp(n))},
-        ylim=c(0,1),
-        xlab="Follow-up (months)",
-        ylab="Vaccine efficacy",
-        main="Vaccine efficacy against severe dehydration",
-        shade="mediumpurple",
-        col="darkslateblue",
-        pch=20)
-
+                x1i=cases_vax, x2i=cases_placebo, 
+                t1i=fu_vax, t2i=fu_placebo, data=data_severe)
 transformed_IRR_sev <- 1 - exp(bysev$yi)
 t.test(transformed_IRR_sev, conf.level = 0.95)
-
 bymild <- escalc(measure="IRR", 
-                x1i=cases_vax, x2i=cases_placebo, 
-                t1i=fu_vax, t2i=fu_placebo, data=data_mild)
-
-res_mild <- rma(bymild$yi, bymild$vi, mods= ~follow_up, data=data_mild)
-res_mild
-
-regplot(res_mild,
-        transf=function(n){return(1-exp(n))},
-        ylim=c(-1,1),
-        xlab="Follow-up (months)",
-        ylab="Vaccine efficacy",
-        main="Vaccine efficacy against mild to no dehydration",
-        shade="darkseagreen",
-        col="darkgreen",
-        pch=20)
-
+                 x1i=cases_vax, x2i=cases_placebo, 
+                 t1i=fu_vax, t2i=fu_placebo, data=data_mild)
 transformed_IRR_mild <- 1 - exp(bymild$yi)
 t.test(transformed_IRR_mild, conf.level = 0.95)
 
@@ -243,55 +394,6 @@ transformed_IRR_RCT <- 1 - exp(VE_RCT$yi)
 res_dose <- aov(transformed_IRR_RCT~ doses,
                data = VE_RCT)
 summary(res_dose)
-
-by1dose <- escalc(measure="IRR", 
-                  x1i=cases_vax, x2i=cases_placebo, 
-                  t1i=fu_vax, t2i=fu_placebo, data=data_RCT_1)
-
-
-transformed_1dose <- 1 - exp(by1dose$yi)
-t.test(transformed_1dose, conf.level = 0.95)
-
-by2dose <- escalc(measure="IRR", 
-                x1i=cases_vax, x2i=cases_placebo, 
-                t1i=fu_vax, t2i=fu_placebo, data=data_RCT_2)
-
-transformed_2dose <- 1 - exp(by2dose$yi)
-t.test(transformed_2dose, conf.level = 0.95)
-
-res_2 <- rma(by2dose$yi, by2dose$vi, mods= ~follow_up, data=data_RCT_2)
-res_2
-
-regplot(res_2,
-        transf=function(n){return(1-exp(n))},
-        ylim=c(-0.5,1),
-        xlab="Follow-up (months)",
-        ylab="Vaccine efficacy",
-        main="Vaccine efficacy of 2 dose schedule",
-        shade="mediumpurple",
-        col="darkslateblue",
-        pch=20)
-
-by3dose <- escalc(measure="IRR", 
-                  x1i=cases_vax, x2i=cases_placebo, 
-                  t1i=fu_vax, t2i=fu_placebo, data=data_RCT_3)
-
-transformed_3dose <- 1 - exp(by3dose$yi)
-t.test(transformed_3dose, conf.level = 0.95)
-
-res_3 <- rma(by3dose$yi, by3dose$vi, mods= ~follow_up, data=data_RCT_3)
-res_3
-
-regplot(res_3,
-        transf=function(n){return(1-exp(n))},
-        ylim=c(0,1),
-        xlab="Follow-up (months)",
-        ylab="Vaccine efficacy",
-        main="Vaccine efficacy of 3 dose schedule",
-        shade="mediumpurple",
-        col="darkslateblue",
-        pch=20)
-
 #------------------------------------------------------------------------------#
 # Sub-analysis of Observational Studies
 #------------------------------------------------------------------------------#
@@ -301,87 +403,190 @@ t.test((1-exp(yi)) ~ vaccine, data=VE_obs)
 # By dose
 data_obs_1 <- subset(data_obs, RCT=="No" & doses=="1")
 data_obs_2 <- subset(data_obs, RCT=="No" & doses=="2")
-
 summary(data_obs_1$follow_up)
 summary(data_obs_2$follow_up)
-
 t.test((1-exp(yi)) ~ doses, data=VE_obs)
 
-by1dose_obs <- escalc(measure="OR", 
-                      ai=cases_vax, bi=noncase_vax, 
-                      ci=cases_placebo, di=noncase_placebo, data=data_obs_1)
-
-transformed_1dose_obs <- 1 - exp(by1dose_obs$yi)
-t.test(transformed_1dose_obs, conf.level = 0.95)
-
-by2dose_obs <- escalc(measure="OR", 
-                      ai=cases_vax, bi=noncase_vax, 
-                      ci=cases_placebo, di=noncase_placebo, data=data_obs_2)
-
-transformed_2dose_obs <- 1 - exp(by2dose_obs$yi)
-t.test(transformed_2dose_obs, conf.level = 0.95)
-
 #------------------------------------------------------------------------------#
-# Waning dynamics of vaccine protection
+# Waning dynamics of vaccine protection: Vaccine Efficacy
 #------------------------------------------------------------------------------#
-bytime <- escalc(measure="IRR", 
+# Linear Model
+bytime_RCT <- escalc(measure="IRR", 
                 x1i=cases_vax, x2i=cases_placebo, 
                 t1i=fu_vax, t2i=fu_placebo, data=data_RCT)
-res_time <- rma(bytime$yi, bytime$vi, mods= ~follow_up, data=data_RCT)
-res_time
+linear_model_RCT <- rma(bytime_RCT$yi, bytime_RCT$vi, mods= ~follow_up, data=data_RCT)
+linear_model_RCT
 
-regplot(res_time,
-        transf=function(n){return(1-exp(n))},
-        xlab="Follow-up (months)",
-        ylab="Vaccine efficacy",
-        main="Vaccine efficacy by duration of follow-up",
-        shade="darksalmon",
-        col="brown",
-        pch=20)
+coef_estimates_RCT <- linear_model_RCT$b
+se_estimates_RCT <- linear_model_RCT$se
+cat("Estimated Parameters of the Linear Model:\n")
+cat("Intercept:", round(coef_estimates_RCT[1], 4), "±", round(se_estimates_RCT[1], 4), "\n")
+cat("Slope (Follow-up Effect):", round(coef_estimates_RCT[2], 4), "±", round(se_estimates_RCT[2], 4), "\n")
 
-new_follow_up <- c(12, 24, 36, 48, 60) 
-new_data <- data.frame(follow_up = new_follow_up)
-new_data_mat <- as.matrix(new_data)
-pred <- predict(res_time, transf = function(n){return(1-exp(n))}, newmods = new_data_mat)
+# Power Law Model 
+VE_RCT$log_VE <- log(VE_RCT$VE)
+VE_RCT$log_follow_up <- log(VE_RCT$follow_up)
+power_law_model <- lm(log_VE ~ log_follow_up, data = VE_RCT)
+model_summary <- summary(power_law_model)
+log_a <- coef(power_law_model)[1]
+b <- coef(power_law_model)[2]
+a <- exp(log_a)
 
-vaccine_efficacy <- 1 - exp(-pred$pred)
-lower_bound <- 1 - exp(-pred$ci.lb)
-upper_bound <- 1 - exp(-pred$ci.ub)
+SE_log_a <- model_summary$coefficients[1, 2]  
+SE_b <- model_summary$coefficients[2, 2]
+SE_a <- SE_log_a * a
+cat("Estimated Parameters:\n")
+cat("a =", a, "with SE =", SE_a, "\n")
+cat("b =", b, "with SE =", SE_b, "\n")
 
-cat("At", new_follow_up, "months, the estimated vaccine efficacy is", 
-    vaccine_efficacy, "with 95% confidence intervals of", lower_bound, "to", 
-    upper_bound)
+# Gamma Model
+VE_RCT <- VE_RCT[VE_RCT$VE > 0, ]
+gamma_model_RCT <- glm(VE ~ follow_up, 
+                   family = Gamma(link = "log"), 
+                   data = VE_RCT)
+summary(gamma_model_RCT)
 
+params_RCT <- coef(gamma_model_RCT)
+se_params_RCT <- summary(gamma_model_RCT)$coefficients[, "Std. Error"]
+cat("Estimated Parameters of the Gamma Model:\n")
+cat("a (Initial Efficacy):", round(exp(params_RCT[1]), 4), "±", round(se_params_RCT[1], 4), "\n")
+cat("b (Rate of Decline):", round(params_RCT[2], 4), "±", round(se_params_RCT[2], 4), "\n")
+
+# Best Fit
+aic_linear <- AIC(linear_model)
+print(aic_linear)
+
+aic_powerlaw <- AIC(power_law_model)
+print(aic_powerlaw)
+
+aic_gamma_RCT <- AIC(gamma_model_RCT)
+print(aic_gamma_RCT)
+
+# Plot the best fit graph for vaccine efficacy
+new_follow_up_RCT <- seq(min(VE_RCT$follow_up), max(VE_RCT$follow_up), length.out = 100)
+new_data_RCT <- data.frame(follow_up = new_follow_up)
+
+predictions_RCT <- predict(gamma_model_RCT, newdata = new_data, type = "link", se.fit = TRUE)
+fit_RCT <- exp(predictions_RCT$fit)  
+lwr_RCT <- exp(predictions_RCT$fit - 1.96 * predictions_RCT$se.fit)  
+upr_RCT <- exp(predictions_RCT$fit + 1.96 * predictions_RCT$se.fit)
+
+plot(VE_RCT$follow_up, VE_RCT$VE, 
+     xlab = "Follow-up (months)", 
+     ylab = "Vaccine Efficacy", 
+     main = "Waning Vaccine Efficacy",
+     pch = 20, col = "brown")
+lines(new_follow_up, fit_RCT, col = "red", lwd = 2)
+lines(new_follow_up, lwr_RCT, col = "darkgray", lty = 2)  # Lower bound
+lines(new_follow_up, upr_RCT, col = "darkgray", lty = 2)
+polygon(c(new_follow_up_RCT, rev(new_follow_up_RCT)), 
+        c(upr_RCT, rev(lwr_RCT)), 
+        col = adjustcolor("darksalmon", alpha.f = 0.2), border = NA)
+
+specified_times_RCT <- data.frame(follow_up = c(12, 24, 36, 48, 60))
+predicted_values_specified_RCT <- predict(gamma_model_RCT, newdata = specified_times_RCT, type = "response",, se.fit = TRUE)
+VE_specified_RCT <- predicted_values_specified_RCT$fit 
+lwr_specified_RCT <- predicted_values_specified_RCT$fit - 1.96 * predicted_values_specified_RCT$se.fit  
+upr_specified_RCT <- predicted_values_specified_RCT$fit + 1.96 * predicted_values_specified_RCT$se.fit
+results_RCT <- data.frame(
+  Follow_Up = specified_times_RCT$follow_up,
+  Predicted_VE = VE_specified_RCT,
+  Lower_CI = lwr_specified_RCT,
+  Uper_CI = upr_specified_RCT 
+)
+print(results_RCT)
+
+#------------------------------------------------------------------------------#
+# Waning dynamics of vaccine protection: Vaccine Effectiveness
+#------------------------------------------------------------------------------#
+# Linear Model
 bytime_obs <- escalc(measure="OR", 
                      ai=cases_vax, bi=noncase_vax, 
                      ci=cases_placebo, di=noncase_placebo, data=data_obs)
+linear_model_obs <- rma(bytime_obs$yi, bytime_obs$vi, mods= ~follow_up, data=data_obs)
+linear_model_obs
 
-res_time_obs <- rma(bytime_obs$yi, bytime_obs$vi, mods= ~follow_up, data=data_obs)
-res_time_obs
+coef_estimates_obs <- linear_model_obs$b
+se_estimates_obs <- linear_model_obs$se
+cat("Estimated Parameters of the Linear Model:\n")
+cat("Intercept:", round(coef_estimates_obs[1], 4), "±", round(se_estimates_obs[1], 4), "\n")
+cat("Slope (Follow-up Effect):", round(coef_estimates_obs[2], 4), "±", round(se_estimates_obs[2], 4), "\n")
 
-regplot(res_time_obs,
-        transf=function(n){return(1-exp(n))},
-        ylim=c(-2,1),
-        xlab="Follow-up (months)",
-        ylab="Vaccine effectiveness",
-        main="Vaccine effectiveness by duration of follow-up",
-        shade="mistyrose2",
-        col="lightpink3",
-        pch=20)
+# Power Law Model 
+VE_obs$log_VE <- log(VE_obs$VE)
+VE_obs$log_follow_up <- log(VE_obs$follow_up)
+power_law_model_obs <- lm(log_VE ~ log_follow_up, data = VE_obs)
+model_summary_obs <- summary(power_law_model_obs)
+log_a_obs <- coef(power_law_model_obs)[1]
+b_obs <- coef(power_law_model_obs)[2]
+a_obs <- exp(log_a_obs)
 
-new_follow_up_obs <- c(12, 24, 36, 48) 
-new_data_obs <- data.frame(follow_up_obs = new_follow_up_obs)
-new_data_mat_obs <- as.matrix(new_data_obs)
-pred_obs <- predict(res_time_obs, transf = function(n){return(1-exp(n))}, newmods = new_data_mat_obs)
+SE_log_a_obs <- model_summary_obs$coefficients[1, 2]  
+SE_b_obs <- model_summary_obs$coefficients[2, 2]
+SE_a_obs <- SE_log_a_obs * a_obs
+cat("Estimated Parameters:\n")
+cat("a =", a_obs, "with SE =", SE_a_obs, "\n")
+cat("b =", b_obs, "with SE =", SE_b_obs, "\n")
 
-vaccine_eff_obs <- 1 - exp(-pred_obs$pred)
-lower_bound_obs <- 1 - exp(-pred_obs$ci.lb)
-upper_bound_obs <- 1 - exp(-pred_obs$ci.ub)
+# Gamma Model
+VE_obs <- VE_obs[VE_obs$VE > 0, ]
+gamma_model_obs <- glm(VE ~ follow_up, 
+                   family = Gamma(link = "log"), 
+                   data = VE_obs)
+summary(gamma_model_obs)
 
-cat("At", new_follow_up_obs, "months, the estimated vaccine efficacy is", 
-    vaccine_eff_obs, "with 95% confidence intervals of", lower_bound_obs, "to", 
-    upper_bound_obs)
+params_obs <- coef(gamma_model_obs)
+se_params_obs <- summary(gamma_model_obs)$coefficients[, "Std. Error"]
+cat("Estimated Parameters of the Gamma Model:\n")
+cat("a (Initial Efficacy):", round(exp(params_obs[1]), 4), "±", round(se_params_obs[1], 4), "\n")
+cat("b (Rate of Decline):", round(params_obs[2], 4), "±", round(se_params_obs[2], 4), "\n")
 
+# Best Fit
+aic_linear_obs <- AIC(linear_model_obs)
+print(aic_linear_obs)
+
+aic_powerlaw_obs <- AIC(power_law_model_obs)
+print(aic_powerlaw_obs)
+
+aic_gamma_obs <- AIC(gamma_model_obs)
+print(aic_gamma_obs)
+
+# Plot the best fit graph for vaccine effectiveness
+new_follow_up_obs <- seq(min(VE_obs$follow_up), max(VE_obs$follow_up), length.out = 100)
+new_data_obs <- data.frame(follow_up = new_follow_up_obs)
+
+predictions_obs <- predict(gamma_model_obs, newdata = new_data_obs, type = "link", se.fit = TRUE)
+fit_obs <- exp(predictions_obs$fit)  
+lwr_obs <- exp(predictions_obs$fit - 1.96 * predictions_obs$se.fit)  
+upr_obs <- exp(predictions_obs$fit + 1.96 * predictions_obs$se.fit)
+
+plot(VE_obs$follow_up, VE_obs$VE, 
+     xlab = "Follow-up (months)", 
+     ylab = "Vaccine Effectiveness", 
+     main = "Waning Vaccine Effectiveness",
+     pch = 20, col = "lightpink3")
+
+lines(new_follow_up_obs, fit_obs, col = "red", lwd = 2)
+lines(new_follow_up_obs, lwr_obs, col = "darkgray", lty = 2)  
+lines(new_follow_up_obs, upr_obs, col = "darkgray", lty = 2)
+
+polygon(c(new_follow_up_obs, rev(new_follow_up_obs)), 
+        c(upr_obs, rev(lwr_obs)), 
+        col = adjustcolor("mistyrose2", alpha.f = 0.2), border = NA)
+
+specified_times_obs <- data.frame(follow_up = c(12, 24, 36, 48))
+predicted_values_specified_obs <- predict(gamma_model_obs, newdata = specified_times_obs, type = "response",, se.fit = TRUE)
+VE_specified_obs <- predicted_values_specified_obs$fit 
+se_fit_obs <- predicted_values_specified_obs$se.fit
+lwr_specified_obs <- VE_specified_obs - 1.96 * se_fit_obs  
+upr_specified_obs <- VE_specified_obs + 1.96 * se_fit_obs
+results_obs <- data.frame(
+  Follow_Up = specified_times_obs$follow_up,
+  Predicted_VE = VE_specified_obs,
+  Lower_CI = lwr_specified_obs,
+  Uper_CI = upr_specified_obs 
+)
+print(results_obs)
 #------------------------------------------------------------------------------#
 # Power Analysis
 #------------------------------------------------------------------------------#
