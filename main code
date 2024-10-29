@@ -1,9 +1,9 @@
 ################################################################################
-# Systematic Review of kOCV                                                           #
+# Systematic Review of kOCV                                                    #
 #                                                                              #
-#         Created: February 20, 2023                                   #
-#         Last Updated: October 28, 2024                                                        #
-#         Coded by: Helena Kwon (hojeong.kwon@einsteinmed.edu)                         #
+#         Created: February 20, 2023                                           #
+#         Last Updated: October 28, 2024                                       #
+#         Coded by: Helena Kwon (hojeong.kwon@einsteinmed.edu)                 #
 ################################################################################
 
 #------------------------------------------------------------------------------#
@@ -477,7 +477,7 @@ plot(VE_RCT$follow_up, VE_RCT$VE,
      main = "Waning Vaccine Efficacy",
      pch = 20, col = "brown")
 lines(new_follow_up, fit_RCT, col = "red", lwd = 2)
-lines(new_follow_up, lwr_RCT, col = "darkgray", lty = 2)  # Lower bound
+lines(new_follow_up, lwr_RCT, col = "darkgray", lty = 2) 
 lines(new_follow_up, upr_RCT, col = "darkgray", lty = 2)
 polygon(c(new_follow_up_RCT, rev(new_follow_up_RCT)), 
         c(upr_RCT, rev(lwr_RCT)), 
